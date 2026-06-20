@@ -88,9 +88,11 @@ export class PokerScene extends Phaser.Scene {
   private buildTable() {
     const { width, height } = this.scale;
     this.centerX = width / 2;
-    this.centerY = height * 0.46;
-    this.tableW = width * 0.92;
-    this.tableH = height * 0.62;
+    // Lift the table so the bottom (hero) seat clears the action bar, and the
+    // top seats clear the HUD strip.
+    this.centerY = height * 0.42;
+    this.tableW = width * 0.9;
+    this.tableH = height * 0.54;
 
     const g = this.add.graphics();
     // Rail
