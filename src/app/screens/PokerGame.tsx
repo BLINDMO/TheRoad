@@ -113,15 +113,6 @@ export default function PokerGame() {
       {/* Phaser table */}
       <PhaserMount scene={PokerScene} className="absolute inset-0" />
 
-      {/* Pot readout (mirrors scene, for clarity on small screens) */}
-      <div className="pointer-events-none absolute inset-x-0 top-[42%] z-10 text-center">
-        {pot > 0 && (
-          <div className="inline-block rounded-pill bg-walnut/70 px-3 py-1 text-xs text-cream-dim ring-1 ring-brass/20">
-            Pot <span className="tnum font-bold text-brass-light">{formatChips(pot)}</span>
-          </div>
-        )}
-      </div>
-
       {/* Action bar */}
       {req && <ActionBar req={req} onAction={act} />}
 
@@ -204,59 +195,60 @@ function ActionBar({ req, onAction }: { req: ActionReq; onAction: (a: any) => vo
     setRaiseTo(Math.max(legal.minRaiseTo, Math.min(legal.maxRaiseTo, target)));
   };
 
+  // Compact, bottom-right cluster so the table and the hero's cards stay visible
+  // (PokerStars-landscape style).
   return (
-    <div className="absolute inset-x-0 bottom-0 z-30 animate-fade-up px-3"
-      style={{ paddingBottom: 'calc(var(--safe-bottom) + 10px)' }}>
-      <div className="walnut grain rounded-panel p-3 shadow-panel ring-1 ring-brass/30">
-        {canRaise && (
-          <div className="mb-3">
-            <div className="flex items-center justify-between text-xs text-cream-dim">
-              <span>Raise to</span>
-              <span className="tnum text-base font-bold text-brass-light">{formatChips(raiseTo)}</span>
-            </div>
-            <input
-              type="range" min={legal.minRaiseTo} max={legal.maxRaiseTo} step={Math.max(1, Math.round((legal.maxRaiseTo - legal.minRaiseTo) / 100))}
-              value={raiseTo} onChange={(e) => setRaiseTo(Number(e.target.value))}
-              className="mt-1.5 w-full accent-amber"
-            />
-            <div className="mt-1 grid grid-cols-4 gap-1.5">
-              {[['½', 0.5], ['¾', 0.75], ['Pot', 1], ['Max', -1]].map(([lbl, f]) => (
-                <button key={lbl as string}
-                  onClick={() => { play('button'); (f as number) === -1 ? setRaiseTo(legal.maxRaiseTo) : quick(f as number); }}
-                  className="tactile rounded-pill bg-walnut-light/70 py-1.5 text-xs font-semibold text-cream-dim ring-1 ring-brass/20">
-                  {lbl}
-                </button>
-              ))}
-            </div>
+    <div className="absolute bottom-0 right-0 z-30 flex animate-fade-up flex-col items-end gap-2 p-3"
+      style={{ paddingBottom: 'calc(var(--safe-bottom) + 8px)', paddingRight: 'calc(var(--safe-right) + 10px)' }}>
+      {canRaise && (
+        <div className="walnut grain w-[300px] rounded-panel p-2.5 shadow-panel ring-1 ring-brass/30">
+          <div className="flex items-center justify-between text-xs text-cream-dim">
+            <span>Raise to</span>
+            <span className="tnum text-base font-bold text-brass-light">{formatChips(raiseTo)}</span>
           </div>
-        )}
-        <div className="grid grid-cols-3 gap-2">
-          <BrassButton variant="danger" sfx="fold" className="py-3.5"
-            onClick={() => onAction({ type: 'fold' })}>
-            Fold
-          </BrassButton>
-          {legal.canCheck ? (
-            <BrassButton variant="felt" sfx="check" className="py-3.5" onClick={() => onAction({ type: 'check' })}>
-              Check
-            </BrassButton>
-          ) : (
-            <BrassButton variant="felt" sfx="chip" className="py-3.5"
-              onClick={() => onAction({ type: 'call' })}>
-              <div className="leading-tight">Call<div className="tnum text-[11px] opacity-90">{formatChips(legal.callAmount)}</div></div>
-            </BrassButton>
-          )}
-          {canRaise ? (
-            <BrassButton variant="amber" sfx="chipStack" className="py-3.5"
-              onClick={() => onAction(raiseTo >= legal.maxRaiseTo ? { type: 'all-in' } : { type: legal.canBet ? 'bet' : 'raise', amount: raiseTo })}>
-              <div className="leading-tight">{raiseTo >= legal.maxRaiseTo ? 'All In' : 'Raise'}
-                {raiseTo < legal.maxRaiseTo && <div className="tnum text-[11px] opacity-90">{formatChips(raiseTo)}</div>}</div>
-            </BrassButton>
-          ) : (
-            <BrassButton variant="amber" sfx="chip" className="py-3.5" onClick={() => onAction({ type: 'call' })}>
-              Call
-            </BrassButton>
-          )}
+          <input
+            type="range" min={legal.minRaiseTo} max={legal.maxRaiseTo}
+            step={Math.max(1, Math.round((legal.maxRaiseTo - legal.minRaiseTo) / 100))}
+            value={raiseTo} onChange={(e) => setRaiseTo(Number(e.target.value))}
+            className="mt-1.5 w-full accent-amber"
+          />
+          <div className="mt-1.5 grid grid-cols-4 gap-1.5">
+            {[['½', 0.5], ['¾', 0.75], ['Pot', 1], ['Max', -1]].map(([lbl, f]) => (
+              <button key={lbl as string}
+                onClick={() => { play('button'); (f as number) === -1 ? setRaiseTo(legal.maxRaiseTo) : quick(f as number); }}
+                className="tactile rounded-pill bg-walnut-light/70 py-1.5 text-xs font-semibold text-cream-dim ring-1 ring-brass/20">
+                {lbl}
+              </button>
+            ))}
+          </div>
         </div>
+      )}
+      <div className="flex gap-2">
+        <BrassButton variant="danger" sfx="fold" className="w-[92px] py-3"
+          onClick={() => onAction({ type: 'fold' })}>
+          Fold
+        </BrassButton>
+        {legal.canCheck ? (
+          <BrassButton variant="felt" sfx="check" className="w-[104px] py-3" onClick={() => onAction({ type: 'check' })}>
+            Check
+          </BrassButton>
+        ) : (
+          <BrassButton variant="felt" sfx="chip" className="w-[104px] py-3"
+            onClick={() => onAction({ type: 'call' })}>
+            <div className="leading-tight">Call<div className="tnum text-[11px] opacity-90">{formatChips(legal.callAmount)}</div></div>
+          </BrassButton>
+        )}
+        {canRaise ? (
+          <BrassButton variant="amber" sfx="chipStack" className="w-[104px] py-3"
+            onClick={() => onAction(raiseTo >= legal.maxRaiseTo ? { type: 'all-in' } : { type: legal.canBet ? 'bet' : 'raise', amount: raiseTo })}>
+            <div className="leading-tight">{raiseTo >= legal.maxRaiseTo ? 'All In' : 'Raise'}
+              {raiseTo < legal.maxRaiseTo && <div className="tnum text-[11px] opacity-90">{formatChips(raiseTo)}</div>}</div>
+          </BrassButton>
+        ) : (
+          <BrassButton variant="amber" sfx="chip" className="w-[104px] py-3" onClick={() => onAction({ type: 'call' })}>
+            Call
+          </BrassButton>
+        )}
       </div>
     </div>
   );

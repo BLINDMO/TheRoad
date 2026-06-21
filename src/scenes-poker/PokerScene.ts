@@ -107,9 +107,9 @@ export class PokerScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.landscape = width >= height;
     this.centerX = width / 2;
-    this.centerY = height * (this.landscape ? 0.42 : 0.40);
-    this.tableW = this.landscape ? width * 0.7 : width * 0.92;
-    this.tableH = this.landscape ? height * 0.62 : height * 0.5;
+    this.centerY = height * (this.landscape ? 0.44 : 0.40);
+    this.tableW = this.landscape ? width * 0.76 : width * 0.92;
+    this.tableH = this.landscape ? height * 0.66 : height * 0.5;
 
     const cx = this.centerX;
     const cy = this.centerY;
@@ -127,16 +127,22 @@ export class PokerScene extends Phaser.Scene {
     rail.lineStyle(1, 0xe4c878, 0.5);
     rail.strokeEllipse(cx, cy, w + 8, h + 8);
 
-    // Felt — layered ellipses give a soft radial gradient (no textures/masks,
-    // which keeps WebGL happy on every device).
+    // Felt — many concentric ellipses interpolate edge→core for a smooth radial
+    // gradient (no textures/masks, which keeps WebGL happy on every device).
     const felt = this.add.graphics().setDepth(-1);
-    felt.fillStyle(0x09301f, 1); felt.fillEllipse(cx, cy, w, h);
-    felt.fillStyle(0x0f4733, 1); felt.fillEllipse(cx, cy, w * 0.94, h * 0.92);
-    felt.fillStyle(0x14543f, 1); felt.fillEllipse(cx, cy - h * 0.02, w * 0.74, h * 0.72);
-    felt.fillStyle(0x1b6149, 0.55); felt.fillEllipse(cx, cy - h * 0.05, w * 0.46, h * 0.42);
-    // Vignette near the rail + betting line.
-    felt.lineStyle(Math.max(6, h * 0.06), 0x062117, 0.35); felt.strokeEllipse(cx, cy, w * 0.97, h * 0.95);
-    felt.lineStyle(Math.max(1, w * 0.004), BRASS, 0.16); felt.strokeEllipse(cx, cy, w * 0.62, h * 0.62);
+    const edge = { r: 0x06, g: 0x21, b: 0x17 };
+    const core = { r: 0x1d, g: 0x67, b: 0x4d };
+    const N = 22;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N; // 0 = outer edge, 1 = centre
+      const col = lerpColor(edge, core, t);
+      felt.fillStyle(col, 1);
+      felt.fillEllipse(cx, cy - h * 0.05 * t, w * (1 - t * 0.9), h * (1 - t * 0.9));
+    }
+    // Soft centre sheen + rail vignette + betting line.
+    felt.fillStyle(0x2a7a5d, 0.18); felt.fillEllipse(cx, cy - h * 0.08, w * 0.34, h * 0.28);
+    felt.lineStyle(Math.max(8, h * 0.07), 0x041b12, 0.4); felt.strokeEllipse(cx, cy, w * 0.98, h * 0.96);
+    felt.lineStyle(Math.max(1.5, w * 0.0035), BRASS, 0.18); felt.strokeEllipse(cx, cy, w * 0.6, h * 0.6);
 
     // Brand monogram, subtle.
     this.add.text(cx, cy - h * 0.12, 'GILDED ACES', {
@@ -166,8 +172,8 @@ export class PokerScene extends Phaser.Scene {
   // Hero anchored bottom-centre; others spread clockwise around the oval.
   private seatPosition(displayIndex: number, total: number): { x: number; y: number } {
     const a = Math.PI / 2 + (displayIndex / total) * Math.PI * 2;
-    const rx = this.tableW * 0.54;
-    const ry = this.tableH * 0.62;
+    const rx = this.tableW * 0.56;
+    const ry = this.tableH * 0.58;
     return { x: this.centerX + Math.cos(a) * rx, y: this.centerY + Math.sin(a) * ry };
   }
 
@@ -208,20 +214,20 @@ export class PokerScene extends Phaser.Scene {
     let o = this.seatObjs.get(seat.seat);
     if (o) return o;
 
-    const PW = this.landscape ? 122 : 108;
-    const PH = 44;
+    const PW = this.landscape ? 130 : 110;
+    const PH = 50;
     const container = this.add.container(pos.x, pos.y).setDepth(12);
 
     const glow = this.add.graphics();
     const plate = this.add.graphics();
     this.drawPlate(plate, PW, PH, false);
 
-    const avatar = this.makeAvatar(seat, -PW / 2 + 24);
-    const nameText = this.add.text(-PW / 2 + 46, -9, seat.name, {
-      fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#F2E9D8', fontStyle: 'bold',
+    const avatar = this.makeAvatar(seat, -PW / 2 + 28);
+    const nameText = this.add.text(-PW / 2 + 54, -10, seat.name, {
+      fontFamily: 'Inter, sans-serif', fontSize: '14px', color: '#F2E9D8', fontStyle: 'bold',
     }).setOrigin(0, 0.5);
-    const stackText = this.add.text(-PW / 2 + 46, 10, '', {
-      fontFamily: 'JetBrains Mono, monospace', fontSize: '12px', color: '#E4C878',
+    const stackText = this.add.text(-PW / 2 + 54, 12, '', {
+      fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', color: '#E4C878',
     }).setOrigin(0, 0.5);
 
     container.add([glow, plate, avatar, nameText, stackText]);
@@ -241,10 +247,14 @@ export class PokerScene extends Phaser.Scene {
 
   private drawPlate(g: Phaser.GameObjects.Graphics, w: number, h: number, active: boolean) {
     g.clear();
-    g.fillStyle(0x1a1410, 0.92);
-    g.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-    g.lineStyle(1.5, active ? 0xe8743b : BRASS, active ? 1 : 0.55);
-    g.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+    g.fillStyle(0x221a12, 0.96);
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+    g.fillStyle(0x140f0a, 0.55);
+    g.fillRoundedRect(-w / 2, h * 0.1, w, h * 0.4, 12);
+    g.lineStyle(1, 0xffffff, 0.06);
+    g.strokeRoundedRect(-w / 2 + 1, -h / 2 + 1, w - 2, h - 2, 11);
+    g.lineStyle(active ? 2 : 1.5, active ? 0xe8743b : BRASS, active ? 1 : 0.5);
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
   }
 
   private makeAvatar(seat: PokerSeatView, x: number): Phaser.GameObjects.Container {
@@ -252,10 +262,10 @@ export class PokerScene extends Phaser.Scene {
     const hue = avatarHue(seat.name + seat.id);
     const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.55, 0.5) as Phaser.Types.Display.ColorObject;
     const dark = Phaser.Display.Color.HSVToRGB(hue / 360, 0.6, 0.3) as Phaser.Types.Display.ColorObject;
-    const ring = this.add.circle(0, 0, 19, Phaser.Display.Color.GetColor(dark.r, dark.g, dark.b)).setStrokeStyle(2, BRASS, 0.7);
-    const disc = this.add.circle(0, 0, 16, Phaser.Display.Color.GetColor(col.r, col.g, col.b));
+    const ring = this.add.circle(0, 0, 23, Phaser.Display.Color.GetColor(dark.r, dark.g, dark.b)).setStrokeStyle(2, BRASS, 0.75);
+    const disc = this.add.circle(0, 0, 20, Phaser.Display.Color.GetColor(col.r, col.g, col.b));
     const letter = this.add.text(0, 0, seat.name.slice(0, 1).toUpperCase(), {
-      fontFamily: 'Playfair Display, serif', fontSize: '18px', color: '#F8F2E3', fontStyle: 'bold',
+      fontFamily: 'Playfair Display, serif', fontSize: '21px', color: '#F8F2E3', fontStyle: 'bold',
     }).setOrigin(0.5);
     c.add([ring, disc, letter]);
     return c;
@@ -352,10 +362,10 @@ export class PokerScene extends Phaser.Scene {
     o.cardSprites = [];
     if (seat.folded) return;
 
-    const cw = seat.isHuman ? (this.landscape ? 66 : 58) : 34;
+    const cw = seat.isHuman ? (this.landscape ? 86 : 64) : 42;
     const ch = cw * CARD_RATIO;
     const toward = Math.sign(this.centerY - pos.y) || -1;
-    const cy = pos.y + (seat.isHuman ? -ch * 0.5 - 6 : toward * 16);
+    const cy = pos.y + (seat.isHuman ? -ch * 0.5 - 8 : toward * 18);
     const showFaces = seat.showCards && seat.cards.length > 0;
     for (let i = 0; i < 2; i++) {
       const card = seat.cards[i];
@@ -434,6 +444,13 @@ export class PokerScene extends Phaser.Scene {
       });
     }
   }
+}
+
+function lerpColor(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }, t: number): number {
+  const r = Math.round(a.r + (b.r - a.r) * t);
+  const g = Math.round(a.g + (b.g - a.g) * t);
+  const bl = Math.round(a.b + (b.b - a.b) * t);
+  return (r << 16) | (g << 8) | bl;
 }
 
 function avatarHue(s: string): number {
