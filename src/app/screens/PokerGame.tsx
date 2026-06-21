@@ -32,8 +32,6 @@ export default function PokerGame() {
   const [result, setResult] = useState<TableResult | null>(null);
   const [pot, setPot] = useState(0);
   const [needRebuy, setNeedRebuy] = useState(false);
-  const portrait = usePortrait();
-  const [stayPortrait, setStayPortrait] = useState(false);
 
   useEffect(() => {
     if (!setup) {
@@ -79,7 +77,8 @@ export default function PokerGame() {
   if (!setup) return null;
 
   return (
-    <div className="fixed inset-0 mx-auto max-w-md overflow-hidden bg-walnut">
+    <ForceLandscape>
+    <div className="relative h-full w-full overflow-hidden bg-walnut">
       {/* HUD top bar */}
       <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 pt-2"
         style={{ paddingTop: 'calc(var(--safe-top) + 6px)' }}>
@@ -143,44 +142,41 @@ export default function PokerGame() {
       )}
 
       {result && <ResultModal result={result} setup={setup} onHome={() => nav('/')} onAnother={() => nav('/poker')} />}
-
-      {portrait && !stayPortrait && !result && <RotatePrompt onStay={() => setStayPortrait(true)} />}
     </div>
+    </ForceLandscape>
   );
 }
 
-function usePortrait() {
-  const [portrait, setPortrait] = useState(
-    typeof window !== 'undefined' ? window.matchMedia('(orientation: portrait)').matches : false,
-  );
+/**
+ * Forces a landscape play area regardless of device/PWA orientation support.
+ * When the viewport is portrait we rotate the whole table 90° (and swap its
+ * width/height) so it fills the screen sideways — iOS PWAs can't be orientation
+ * locked, so this is the only reliable way to guarantee a landscape table.
+ */
+function ForceLandscape({ children }: { children: React.ReactNode }) {
+  const [vp, setVp] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 0,
+    h: typeof window !== 'undefined' ? window.innerHeight : 0,
+  }));
   useEffect(() => {
-    const mq = window.matchMedia('(orientation: portrait)');
-    const h = () => setPortrait(mq.matches);
-    mq.addEventListener('change', h);
-    return () => mq.removeEventListener('change', h);
+    const on = () => setVp({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', on);
+    window.addEventListener('orientationchange', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      window.removeEventListener('orientationchange', on);
+    };
   }, []);
-  return portrait;
-}
-
-function RotatePrompt({ onStay }: { onStay: () => void }) {
+  const portrait = vp.h >= vp.w;
+  const inner: React.CSSProperties = portrait
+    ? {
+        position: 'absolute', top: 0, left: 0, width: vp.h, height: vp.w,
+        transformOrigin: 'top left', transform: `translateX(${vp.w}px) rotate(90deg)`,
+      }
+    : { position: 'absolute', inset: 0 };
   return (
-    <div className="absolute inset-0 z-50 grid place-items-center bg-walnut/95 px-8 text-center"
-      style={{ paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}>
-      <div className="animate-fade-up">
-        <div className="mx-auto mb-5 w-fit animate-pulse">
-          <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="7" y="2" width="10" height="20" rx="2" transform="rotate(35 12 12)" />
-            <path d="M2.5 13.5a9 9 0 0 0 14 5.5" />
-            <path d="M16.5 19.5l1.2-2.6 2.6 1.2" />
-          </svg>
-        </div>
-        <h2 className="font-display text-2xl font-bold brass-text">Turn your phone sideways</h2>
-        <p className="mt-2 text-sm text-cream-dim">The poker table plays in landscape for a bigger, clearer view — just like the pros.</p>
-        <button onClick={onStay}
-          className="tactile mt-6 rounded-pill bg-walnut-light/70 px-5 py-2.5 text-sm font-semibold text-cream-dim ring-1 ring-brass/30">
-          Play in portrait
-        </button>
-      </div>
+    <div style={{ position: 'fixed', inset: 0, background: '#0a0805', overflow: 'hidden', zIndex: 50 }}>
+      <div style={inner}>{children}</div>
     </div>
   );
 }

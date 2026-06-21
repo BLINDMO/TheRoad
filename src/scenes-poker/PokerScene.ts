@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import { pokerBus, type PokerView, type PokerSeatView } from '../lib/eventBus';
 import { cardTexture, cardBackTexture, CARD_RATIO } from './cardTextures';
 import { renderChip } from '../assets/chipArt';
-import { renderFelt } from '../assets/tableArt';
 
 // The poker table surface. React stays out of this canvas; the scene consumes
 // typed events from pokerBus and renders an HD felt, modern player pods, cards,
@@ -112,32 +111,35 @@ export class PokerScene extends Phaser.Scene {
     this.tableW = this.landscape ? width * 0.7 : width * 0.92;
     this.tableH = this.landscape ? height * 0.62 : height * 0.5;
 
-    // Rail (layered) drawn beneath the felt so it reads as a rim.
+    const cx = this.centerX;
+    const cy = this.centerY;
+    const w = this.tableW;
+    const h = this.tableH;
+
+    // Rail (layered) drawn beneath the felt so it reads as a polished rim.
     const rail = this.add.graphics().setDepth(-2);
     rail.fillStyle(0x140f0a, 1);
-    rail.fillEllipse(this.centerX, this.centerY, this.tableW + 54, this.tableH + 54);
+    rail.fillEllipse(cx, cy, w + 54, h + 54);
     rail.fillStyle(0x2a211a, 1);
-    rail.fillEllipse(this.centerX, this.centerY, this.tableW + 34, this.tableH + 34);
+    rail.fillEllipse(cx, cy, w + 34, h + 34);
     rail.lineStyle(3, BRASS, 0.85);
-    rail.strokeEllipse(this.centerX, this.centerY, this.tableW + 30, this.tableH + 30);
+    rail.strokeEllipse(cx, cy, w + 30, h + 30);
     rail.lineStyle(1, 0xe4c878, 0.5);
-    rail.strokeEllipse(this.centerX, this.centerY, this.tableW + 8, this.tableH + 8);
+    rail.strokeEllipse(cx, cy, w + 8, h + 8);
 
-    // HD felt texture clipped to an ellipse.
-    const feltKey = 'felt-tex';
-    if (this.textures.exists(feltKey)) this.textures.remove(feltKey);
-    const fw = Math.min(900, Math.round(this.tableW));
-    const fh = Math.round(fw * (this.tableH / this.tableW));
-    this.textures.addCanvas(feltKey, renderFelt(fw, fh));
-    const felt = this.add.image(this.centerX, this.centerY, feltKey)
-      .setDisplaySize(this.tableW, this.tableH).setDepth(-1);
-    const maskG = this.make.graphics({});
-    maskG.fillStyle(0xffffff);
-    maskG.fillEllipse(this.centerX, this.centerY, this.tableW, this.tableH);
-    felt.setMask(maskG.createGeometryMask());
+    // Felt — layered ellipses give a soft radial gradient (no textures/masks,
+    // which keeps WebGL happy on every device).
+    const felt = this.add.graphics().setDepth(-1);
+    felt.fillStyle(0x09301f, 1); felt.fillEllipse(cx, cy, w, h);
+    felt.fillStyle(0x0f4733, 1); felt.fillEllipse(cx, cy, w * 0.94, h * 0.92);
+    felt.fillStyle(0x14543f, 1); felt.fillEllipse(cx, cy - h * 0.02, w * 0.74, h * 0.72);
+    felt.fillStyle(0x1b6149, 0.55); felt.fillEllipse(cx, cy - h * 0.05, w * 0.46, h * 0.42);
+    // Vignette near the rail + betting line.
+    felt.lineStyle(Math.max(6, h * 0.06), 0x062117, 0.35); felt.strokeEllipse(cx, cy, w * 0.97, h * 0.95);
+    felt.lineStyle(Math.max(1, w * 0.004), BRASS, 0.16); felt.strokeEllipse(cx, cy, w * 0.62, h * 0.62);
 
     // Brand monogram, subtle.
-    this.add.text(this.centerX, this.centerY - this.tableH * 0.12, 'GILDED ACES', {
+    this.add.text(cx, cy - h * 0.12, 'GILDED ACES', {
       fontFamily: 'Playfair Display, serif', fontSize: this.landscape ? '22px' : '18px',
       color: '#0c3a2a', fontStyle: 'bold',
     }).setOrigin(0.5).setAlpha(0.5).setDepth(-1);
