@@ -4,50 +4,72 @@ import type { MachineConfig, SpinResult } from '../engine-slots/types';
 import { renderSymbol } from '../assets/symbolArt';
 
 // One reusable reel-rig engine that drives every machine skin. The machine
-// config (symbols, theme, paylines) arrives via the bus; the scene only renders
-// and animates — reel spin-up, hold, anticipation wobble and decelerated stop,
-// then win-line highlighting. React owns the math and the feature flow.
+// config (symbols, theme, paylines) arrives via the bus; the scene renders and
+// animates real scrolling reels — spin-up, hold, anticipation and a decelerated
+// bounce stop — then highlights winning lines. React owns the math and features.
 
 const REELS = 5;
 const ROWS = 3;
+const BUFFER = 2; // extra sprites above/below the visible window for scrolling
+
+interface Reel {
+  sprites: Phaser.GameObjects.Image[]; // top -> bottom, length ROWS + BUFFER
+  scroll: number;
+  spinning: boolean;
+  speed: number;
+  x: number;
+}
 
 export class SlotScene extends Phaser.Scene {
   private cfg?: MachineConfig;
-  private cells: Phaser.GameObjects.Image[][] = []; // [reel][row]
+  private reels: Reel[] = [];
+  private faceCells: Phaser.GameObjects.Image[][] = []; // [reel][row] after a stop
   private cellSize = 64;
-  private originX = 0;
-  private originY = 0;
-  private reelStopTimers: Phaser.Time.TimerEvent[] = [];
-  private spinningReels = new Set<number>();
+  private gridX = 0; // left edge of grid
+  private gridY = 0; // top edge of grid
   private lineGfx!: Phaser.GameObjects.Graphics;
   private frameGfx!: Phaser.GameObjects.Graphics;
+  private maskGfx!: Phaser.GameObjects.Graphics;
   private offSpin!: () => void;
   private offMachine!: () => void;
   private symbolKeys = new Map<string, string>();
+  private pendingResult?: SpinResult;
+  private stopOrder: { reel: number; at: number }[] = [];
+  private spinClock = 0;
 
   constructor() {
     super('SlotScene');
   }
 
   create() {
-    this.frameGfx = this.add.graphics();
+    this.frameGfx = this.add.graphics().setDepth(2);
+    this.maskGfx = this.add.graphics().setVisible(false);
     this.lineGfx = this.add.graphics().setDepth(20);
+
     this.offMachine = slotBus.on('set-machine', (cfg) => this.setupMachine(cfg));
-    this.offSpin = slotBus.on('spin', ({ result, freeSpin }) => this.runSpin(result, freeSpin));
+    this.offSpin = slotBus.on('spin', ({ result }) => this.runSpin(result));
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
     this.scale.on('resize', this.onResize, this);
+
     slotBus.emit('scene-ready', undefined);
+    const cached = this.registry.get('slotMachine') as MachineConfig | undefined;
+    if (cached) this.setupMachine(cached);
   }
 
-  shutdown() {
+  private cleanup() {
     this.offSpin?.();
     this.offMachine?.();
     this.scale.off('resize', this.onResize, this);
+    this.reels = [];
+    this.faceCells = [];
   }
 
   private onResize() {
     if (this.cfg) {
       this.layout();
-      this.redrawFrame();
+      this.drawFrame();
     }
   }
 
@@ -55,9 +77,7 @@ export class SlotScene extends Phaser.Scene {
     let key = this.symbolKeys.get(id);
     if (!key) {
       key = `sym-${this.cfg!.id}-${id}`;
-      if (!this.textures.exists(key)) {
-        this.textures.addCanvas(key, renderSymbol(id, this.cfg!.theme, 128));
-      }
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderSymbol(id, this.cfg!.theme, 128));
       this.symbolKeys.set(id, key);
     }
     return key;
@@ -65,60 +85,86 @@ export class SlotScene extends Phaser.Scene {
 
   private setupMachine(cfg: MachineConfig) {
     this.cfg = cfg;
+    this.registry.set('slotMachine', cfg);
     this.symbolKeys.clear();
-    this.cells.forEach((col) => col.forEach((c) => c.destroy()));
-    this.cells = [];
-    this.layout();
-    // Seed an initial random board.
+    this.reels.forEach((r) => r.sprites.forEach((s) => s.destroy()));
+    this.reels = [];
+    this.faceCells = [];
+
+    this.computeLayout();
     for (let r = 0; r < REELS; r++) {
-      this.cells[r] = [];
-      for (let row = 0; row < ROWS; row++) {
+      const sprites: Phaser.GameObjects.Image[] = [];
+      for (let i = 0; i < ROWS + BUFFER; i++) {
         const id = this.randomSymbol();
-        const img = this.add.image(0, 0, this.symbolTexture(id)).setData('id', id).setDepth(5);
-        this.cells[r][row] = img;
+        sprites.push(this.add.image(0, 0, this.symbolTexture(id)).setData('id', id).setDepth(5));
       }
+      this.reels.push({ sprites, scroll: 0, spinning: false, speed: 0, x: 0 });
+      this.faceCells[r] = sprites.slice(BUFFER / 2, BUFFER / 2 + ROWS);
     }
     this.layout();
-    this.redrawFrame();
+    this.drawFrame();
+    this.applyMask();
+  }
+
+  private computeLayout() {
+    const { width, height } = this.scale;
+    const margin = width * 0.05;
+    const usableW = width - margin * 2;
+    this.cellSize = Math.min(usableW / REELS, (height * 0.62) / ROWS);
+    const gridW = this.cellSize * REELS;
+    const gridH = this.cellSize * ROWS;
+    this.gridX = (width - gridW) / 2;
+    this.gridY = (height - gridH) / 2;
   }
 
   private layout() {
-    if (!this.cfg) return;
-    const { width, height } = this.scale;
-    const margin = width * 0.04;
-    const usableW = width - margin * 2;
-    this.cellSize = Math.min(usableW / REELS, (height * 0.6) / ROWS);
-    const gridW = this.cellSize * REELS;
-    const gridH = this.cellSize * ROWS;
-    this.originX = (width - gridW) / 2 + this.cellSize / 2;
-    this.originY = (height - gridH) / 2 + this.cellSize / 2;
-    for (let r = 0; r < this.cells.length; r++) {
-      for (let row = 0; row < ROWS; row++) {
-        const img = this.cells[r]?.[row];
-        if (!img) continue;
-        img.setPosition(this.originX + r * this.cellSize, this.originY + row * this.cellSize);
-        img.setDisplaySize(this.cellSize * 0.92, this.cellSize * 0.92);
-      }
+    this.computeLayout();
+    for (let r = 0; r < REELS; r++) {
+      const reel = this.reels[r];
+      if (!reel) continue;
+      reel.x = this.gridX + r * this.cellSize + this.cellSize / 2;
+      this.positionReel(r);
     }
   }
 
-  private redrawFrame() {
+  /** Place a reel's sprites at their resting positions, offset by scroll. */
+  private positionReel(r: number) {
+    const reel = this.reels[r];
+    const half = BUFFER / 2;
+    for (let i = 0; i < reel.sprites.length; i++) {
+      const sp = reel.sprites[i];
+      const baseY = this.gridY + (i - half) * this.cellSize + this.cellSize / 2;
+      sp.setPosition(reel.x, baseY + reel.scroll);
+      sp.setDisplaySize(this.cellSize * 0.9, this.cellSize * 0.9);
+    }
+  }
+
+  private drawFrame() {
     const g = this.frameGfx;
     g.clear();
     const gridW = this.cellSize * REELS;
     const gridH = this.cellSize * ROWS;
-    const x = this.originX - this.cellSize / 2;
-    const y = this.originY - this.cellSize / 2;
-    // reel wells
-    g.fillStyle(0x0a0712, 1);
-    g.fillRoundedRect(x - 10, y - 10, gridW + 20, gridH + 20, 16);
+    const x = this.gridX;
+    const y = this.gridY;
+    g.fillStyle(0x080611, 1);
+    g.fillRoundedRect(x - 12, y - 12, gridW + 24, gridH + 24, 18);
     for (let r = 0; r < REELS; r++) {
-      g.fillStyle(r % 2 ? 0x0c0a1a : 0x100c20, 1);
+      g.fillStyle(r % 2 ? 0x0d0a1c : 0x120e24, 1);
       g.fillRoundedRect(x + r * this.cellSize + 2, y + 2, this.cellSize - 4, gridH - 4, 8);
     }
-    // brass frame
-    g.lineStyle(3, 0xc9a24b, 0.9);
-    g.strokeRoundedRect(x - 10, y - 10, gridW + 20, gridH + 20, 16);
+    g.lineStyle(4, 0xc9a24b, 0.95);
+    g.strokeRoundedRect(x - 12, y - 12, gridW + 24, gridH + 24, 18);
+    g.lineStyle(1, 0xe4c878, 0.4);
+    g.strokeRoundedRect(x - 6, y - 6, gridW + 12, gridH + 12, 14);
+  }
+
+  private applyMask() {
+    const g = this.maskGfx;
+    g.clear();
+    g.fillStyle(0xffffff);
+    g.fillRect(this.gridX, this.gridY, this.cellSize * REELS, this.cellSize * ROWS);
+    const mask = g.createGeometryMask();
+    this.reels.forEach((reel) => reel.sprites.forEach((s) => s.setMask(mask)));
   }
 
   private randomSymbol(): string {
@@ -126,81 +172,95 @@ export class SlotScene extends Phaser.Scene {
     return strip[Math.floor(Math.random() * strip.length)].id;
   }
 
-  private runSpin(result: SpinResult, _freeSpin: boolean) {
+  private runSpin(result: SpinResult) {
     if (!this.cfg) return;
     this.lineGfx.clear();
-    this.spinningReels = new Set([0, 1, 2, 3, 4]);
-    this.reelStopTimers.forEach((t) => t.remove());
-    this.reelStopTimers = [];
+    this.pendingResult = result;
+    this.spinClock = 0;
 
-    // Detect anticipation: if 2 scatters already, slow the later reels.
     const scatterId = this.cfg.scatterId;
     const targetScatters = result.grid.flat().filter((id) => id === scatterId).length;
 
+    this.stopOrder = [];
     for (let r = 0; r < REELS; r++) {
-      this.startReelBlur(r);
-      // Anticipation when scatter could still complete a trigger on later reels.
+      const reel = this.reels[r];
+      reel.spinning = true;
+      reel.speed = this.cellSize * (22 + r * 2); // px/sec, slightly faster on later reels
       const earlyScatter = countScatterUpTo(result.grid, scatterId, r);
       const anticipate = r >= 2 && earlyScatter >= 2 && targetScatters >= 2;
-      const stopDelay = 420 + r * 240 + (anticipate ? 900 : 0);
-      const t = this.time.delayedCall(stopDelay, () => {
-        if (anticipate) this.flashReel(r);
-        this.stopReel(r, result.grid[r]);
-        if (r === REELS - 1) {
-          this.time.delayedCall(120, () => this.afterStop(result));
-        }
-      });
-      this.reelStopTimers.push(t);
+      const at = 450 + r * 280 + (anticipate ? 1100 : 0);
+      this.stopOrder.push({ reel: r, at });
+      if (anticipate) this.flashReel(r);
     }
   }
 
-  private startReelBlur(reel: number) {
-    const col = this.cells[reel];
-    const timer = this.time.addEvent({
-      delay: 40,
-      loop: true,
-      callback: () => {
-        if (!this.spinningReels.has(reel)) { timer.remove(); return; }
-        for (const cell of col) {
-          const id = this.randomSymbol();
-          cell.setTexture(this.symbolTexture(id)).setData('id', id);
-        }
-        // motion: squash vertically
-        col.forEach((c) => c.setScale(c.scaleX, c.scaleY)); // keep size via displaySize
-      },
-    });
-    // vertical jitter for motion feel
-    col.forEach((c) => {
-      this.tweens.add({ targets: c, y: c.y + 6, yoyo: true, repeat: -1, duration: 60, ease: 'Sine.inOut' });
-    });
+  update(_time: number, delta: number) {
+    if (!this.cfg) return;
+    const anySpinning = this.reels.some((r) => r.spinning);
+    if (!anySpinning) return;
+    this.spinClock += delta;
+    const dt = delta / 1000;
+
+    for (let r = 0; r < REELS; r++) {
+      const reel = this.reels[r];
+      if (!reel.spinning) continue;
+
+      reel.scroll += reel.speed * dt;
+      // Recycle sprites that scrolled a full cell past the bottom.
+      while (reel.scroll >= this.cellSize) {
+        reel.scroll -= this.cellSize;
+        const last = reel.sprites.pop()!;
+        const id = this.randomSymbol();
+        last.setTexture(this.symbolTexture(id)).setData('id', id);
+        reel.sprites.unshift(last);
+      }
+      this.positionReel(r);
+
+      const stop = this.stopOrder.find((s) => s.reel === r);
+      if (stop && this.spinClock >= stop.at) {
+        this.stopReel(r);
+      }
+    }
   }
 
-  private stopReel(reel: number, columnIds: string[]) {
-    this.spinningReels.delete(reel);
-    const col = this.cells[reel];
-    this.tweens.killTweensOf(col);
+  private stopReel(r: number) {
+    const reel = this.reels[r];
+    reel.spinning = false;
+    reel.scroll = 0;
+    const result = this.pendingResult!;
+    const col = result.grid[r];
+    const half = BUFFER / 2;
+
+    // Assign final symbols: visible window = target column, buffers = random.
+    for (let i = 0; i < reel.sprites.length; i++) {
+      const sp = reel.sprites[i];
+      const rowIdx = i - half;
+      const id = rowIdx >= 0 && rowIdx < ROWS ? col[rowIdx] : this.randomSymbol();
+      sp.setTexture(this.symbolTexture(id)).setData('id', id);
+    }
+    this.faceCells[r] = reel.sprites.slice(half, half + ROWS);
+    this.positionReel(r);
+
+    // Bounce-in the landing.
     for (let row = 0; row < ROWS; row++) {
-      const id = columnIds[row];
-      const cell = col[row];
-      cell.setTexture(this.symbolTexture(id)).setData('id', id);
-      const baseY = this.originY + row * this.cellSize;
-      cell.setPosition(this.originX + reel * this.cellSize, baseY - 18);
-      this.tweens.add({
-        targets: cell, y: baseY, duration: 260, ease: 'Bounce.out',
-      });
-      cell.setDisplaySize(this.cellSize * 0.92, this.cellSize * 0.92);
+      const sp = this.faceCells[r][row];
+      const baseY = sp.y;
+      sp.y = baseY - 22;
+      this.tweens.add({ targets: sp, y: baseY, duration: 280, ease: 'Bounce.out' });
     }
-    // emit a stop sound hook via global (handled in React through bus? keep simple)
-    this.events.emit('reelstop');
+
+    if (this.reels.every((rr) => !rr.spinning)) {
+      this.time.delayedCall(120, () => this.afterStop(result));
+    }
   }
 
   private flashReel(reel: number) {
-    const x = this.originX + reel * this.cellSize - this.cellSize / 2;
-    const y = this.originY - this.cellSize / 2;
-    const glow = this.add.rectangle(x + this.cellSize / 2, y + (this.cellSize * ROWS) / 2,
-      this.cellSize, this.cellSize * ROWS, 0xe8743b, 0.0).setDepth(15);
-    this.tweens.add({ targets: glow, fillAlpha: 0.3, yoyo: true, repeat: 3, duration: 200,
-      onComplete: () => glow.destroy() });
+    const x = this.gridX + reel * this.cellSize;
+    const glow = this.add.rectangle(
+      x + this.cellSize / 2, this.gridY + (this.cellSize * ROWS) / 2,
+      this.cellSize, this.cellSize * ROWS, 0xe8743b, 0,
+    ).setDepth(15);
+    this.tweens.add({ targets: glow, fillAlpha: 0.32, yoyo: true, repeat: 4, duration: 220, onComplete: () => glow.destroy() });
   }
 
   private afterStop(result: SpinResult) {
@@ -212,29 +272,27 @@ export class SlotScene extends Phaser.Scene {
     if (!this.cfg) return;
     const g = this.lineGfx;
     g.clear();
-    const colors = [0xe8743b, 0x2fa37c, 0xc9a24b, 0x5d8bff, 0xb07fe0];
+    const colors = [0xe8743b, 0x2fa37c, 0xc9a24b, 0x5d8bff, 0xb07fe0, 0xff5d6c];
     result.lineWins.forEach((w, i) => {
       const line = this.cfg!.paylines[w.line];
-      g.lineStyle(4, colors[i % colors.length], 0.9);
+      g.lineStyle(4, colors[i % colors.length], 0.92);
       g.beginPath();
       for (let r = 0; r < REELS; r++) {
-        const x = this.originX + r * this.cellSize;
-        const y = this.originY + line[r] * this.cellSize;
+        const x = this.gridX + r * this.cellSize + this.cellSize / 2;
+        const y = this.gridY + line[r] * this.cellSize + this.cellSize / 2;
         if (r === 0) g.moveTo(x, y);
         else g.lineTo(x, y);
       }
       g.strokePath();
-      // pulse winning cells
       for (let r = 0; r < w.count; r++) {
-        const cell = this.cells[r][line[r]];
-        this.tweens.add({ targets: cell, scale: cell.scale * 1.12, yoyo: true, repeat: 2, duration: 200 });
+        const cell = this.faceCells[r]?.[line[r]];
+        if (cell) this.tweens.add({ targets: cell, scaleX: cell.scaleX * 1.12, scaleY: cell.scaleY * 1.12, yoyo: true, repeat: 2, duration: 200 });
       }
     });
-    // scatter pulse
     if (result.scatterCount >= 3 && this.cfg.scatterId) {
-      this.cells.forEach((col) => col.forEach((c) => {
+      this.faceCells.forEach((col) => col.forEach((c) => {
         if (c.getData('id') === this.cfg!.scatterId) {
-          this.tweens.add({ targets: c, scale: c.scale * 1.2, yoyo: true, repeat: 3, duration: 220 });
+          this.tweens.add({ targets: c, scaleX: c.scaleX * 1.2, scaleY: c.scaleY * 1.2, yoyo: true, repeat: 3, duration: 220 });
         }
       }));
     }

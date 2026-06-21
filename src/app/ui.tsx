@@ -10,7 +10,7 @@ export function formatChips(n: number): string {
 export function SafeScreen({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
     <div
-      className={`min-h-full w-full ${className}`}
+      className={`min-h-[100dvh] w-full ${className}`}
       style={{
         paddingTop: 'var(--safe-top)',
         paddingBottom: 'var(--safe-bottom)',

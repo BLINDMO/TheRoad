@@ -77,7 +77,7 @@ export default function PokerGame() {
   if (!setup) return null;
 
   return (
-    <div className="relative min-h-full overflow-hidden bg-walnut">
+    <div className="fixed inset-0 mx-auto max-w-md overflow-hidden bg-walnut">
       {/* HUD top bar */}
       <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 pt-2"
         style={{ paddingTop: 'calc(var(--safe-top) + 6px)' }}>

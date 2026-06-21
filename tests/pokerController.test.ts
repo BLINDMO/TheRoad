@@ -56,4 +56,25 @@ describe('PokerController end-to-end', () => {
     expect(result.place).toBeGreaterThanOrEqual(1);
     expect(result.fieldSize).toBe(6);
   }, 40_000);
+
+  it('plays a multi-table tournament to an honest finishing place', async () => {
+    const schedule = buildSchedule(20, 16, 1.5, 4);
+    const fieldSize = 12;
+    const setup: PokerSetup = {
+      mode: 'mtt', seatCount: 6, startingStack: 80,
+      sb: schedule[0].sb, bb: schedule[0].bb, buyIn: 1000,
+      schedule, handsPerLevel: 4, fieldSize,
+    };
+    const result = await new Promise<TableResult>((resolve) => {
+      const ctrl = new PokerController(setup, (r) => resolve(r));
+      pokerBus.on('request-action', () => {
+        setTimeout(() => pokerBus.emit('human-action', { type: 'fold' }), 0);
+      });
+      void ctrl.start();
+    });
+    expect(result.fieldSize).toBe(fieldSize);
+    // Place must reflect the real field, never a predetermined value.
+    expect(result.place).toBeGreaterThanOrEqual(1);
+    expect(result.place).toBeLessThanOrEqual(fieldSize);
+  }, 40_000);
 });

@@ -11,7 +11,9 @@ import { useGameStore } from '../../store/useGameStore';
 import { BrassButton, formatChips, MoneyPill, Panel } from '../ui';
 import { play, haptic } from '../../audio/sound';
 
-const BET_LEVELS = [10, 20, 50, 100, 200, 500];
+// A normal-feeling social-casino bet ladder (total wager across all 10 lines).
+const BET_LEVELS = [20, 40, 60, 100, 200, 400, 600, 1000, 2000, 4000, 10000];
+const DEFAULT_BET_IDX = 3; // 100
 
 export default function SlotGame() {
   const { id } = useParams();
@@ -22,7 +24,7 @@ export default function SlotGame() {
   const store = useGameStore;
 
   const rngRef = useRef(makeRng());
-  const [betIdx, setBetIdx] = useState(1);
+  const [betIdx, setBetIdx] = useState(DEFAULT_BET_IDX);
   const [busy, setBusy] = useState(false);
   const [lastWin, setLastWin] = useState(0);
   const [showPaytable, setShowPaytable] = useState(false);
@@ -164,7 +166,7 @@ export default function SlotGame() {
   const jp = cfg.jackpot ? (jackpots[cfg.id] ?? cfg.jackpot.seed) : null;
 
   return (
-    <div className="relative flex min-h-full flex-col bg-gradient-to-b from-[#171228] to-[#080610]">
+    <div className="fixed inset-0 mx-auto flex max-w-md flex-col bg-gradient-to-b from-[#171228] to-[#080610]">
       {/* top bar */}
       <div className="z-20 flex items-center justify-between px-3 pt-2" style={{ paddingTop: 'calc(var(--safe-top) + 6px)' }}>
         <button onClick={() => { play('button'); nav('/slots'); }}
@@ -208,7 +210,11 @@ export default function SlotGame() {
               <div className="tnum font-slab text-lg font-bold text-amber-light">{formatChips(lastWin)}</div>
             </div>
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-widest text-cream-mute">10 lines</div>
+              <button onClick={() => { play('button'); setBetIdx(BET_LEVELS.length - 1); }}
+                disabled={busy}
+                className="tactile rounded-pill bg-walnut-light/70 px-3 py-1.5 text-[11px] font-bold text-brass-light ring-1 ring-brass/20 disabled:opacity-40">
+                Max Bet
+              </button>
             </div>
           </div>
 
@@ -216,9 +222,10 @@ export default function SlotGame() {
             {/* bet selector */}
             <div className="flex items-center gap-1 rounded-pill bg-walnut-light/60 p-1 ring-1 ring-brass/20">
               <StepBtn disabled={busy || betIdx === 0} onClick={() => setBetIdx((i) => Math.max(0, i - 1))}>−</StepBtn>
-              <div className="min-w-[64px] text-center">
-                <div className="text-[9px] uppercase tracking-widest text-cream-mute">Bet</div>
-                <div className="tnum text-sm font-bold text-brass-light">{formatChips(totalBet)}</div>
+              <div className="min-w-[78px] text-center">
+                <div className="text-[9px] uppercase tracking-widest text-cream-mute">Total Bet</div>
+                <div className="tnum text-base font-bold text-brass-light">{formatChips(totalBet)}</div>
+                <div className="tnum text-[9px] text-cream-mute">{formatChips(totalBet / 10)}/line</div>
               </div>
               <StepBtn disabled={busy || betIdx === BET_LEVELS.length - 1} onClick={() => setBetIdx((i) => Math.min(BET_LEVELS.length - 1, i + 1))}>+</StepBtn>
             </div>

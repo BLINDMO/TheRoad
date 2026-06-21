@@ -61,6 +61,7 @@ export class PokerController {
   private humanResolver: ((a: Action) => void) | null = null;
   private rebuyResolver: ((v: 'rebuy' | 'leave') => void) | null = null;
   private offBus: () => void;
+  private offReady: () => void;
 
   constructor(
     private setup: PokerSetup,
@@ -69,6 +70,11 @@ export class PokerController {
     this.offBus = pokerBus.on('human-action', (a) => {
       this.humanResolver?.(a);
       this.humanResolver = null;
+    });
+    // When the table scene (re)mounts, immediately re-publish the current view
+    // so it renders right away instead of waiting for the next action.
+    this.offReady = pokerBus.on('scene-ready', () => {
+      if (this.lastView) pokerBus.emit('state', this.lastView);
     });
     this.buildSeats();
     if (setup.mode === 'mtt' && setup.fieldSize) {
@@ -152,11 +158,15 @@ export class PokerController {
       }
     }
 
-    // Refill/cleanup the table.
+    // Refill/cleanup the table (cash rebuys; MTT seats the surviving field).
     this.maintainTable();
-    let active = this.activeSeats();
+    // Tournament champion: hero is the only player left in the whole event.
+    if (this.setup.mode !== 'cash' && this.activeRemaining() <= 1) {
+      this.handleTournamentEnd(false);
+      return true;
+    }
+    const active = this.activeSeats();
     if (active.length < 2) {
-      // Everyone else gone — hero wins what's left.
       this.handleTournamentEnd(false);
       return true;
     }
@@ -359,20 +369,43 @@ export class PokerController {
   }
 
   private maintainTable() {
-    if (this.setup.mode !== 'cash') return;
-    // AI that busted: rebuy (most) or leave and get replaced.
-    for (const s of this.seats) {
-      if (s.isHuman || s.eliminated) continue;
-      if (s.stack <= 0) {
-        if (this.rng() < 0.8) {
-          s.stack = this.setup.startingStack;
-        } else {
-          // Replace with a fresh face.
-          s.name = NAMES[Math.floor(this.rng() * NAMES.length)];
-          s.avatar = s.name;
-          s.persona = PERSONA_POOL[Math.floor(this.rng() * PERSONA_POOL.length)];
+    if (this.setup.mode === 'cash') {
+      // AI that busted: rebuy (most) or leave and get replaced by a fresh face.
+      for (const s of this.seats) {
+        if (s.isHuman || s.eliminated) continue;
+        if (s.stack <= 0) {
+          if (this.rng() >= 0.8) {
+            s.name = NAMES[Math.floor(this.rng() * NAMES.length)];
+            s.avatar = s.name;
+            s.persona = PERSONA_POOL[Math.floor(this.rng() * PERSONA_POOL.length)];
+          }
           s.stack = this.setup.startingStack;
         }
+      }
+      return;
+    }
+
+    // Sit & Go is a single table played to the finish — no refills.
+    if (this.setup.mode === 'sng' || !this.field) return;
+
+    // Marquee MTT: seat exactly the surviving field at the hero's table, up to
+    // the table size. Refills are existing survivors relocating from other
+    // tables (no new chips invented) — which also performs the final-table
+    // redraw once the field collapses to the table size. The hero must out-play
+    // every one of them; nothing is predetermined.
+    const aliveAtTable = () => this.seats.filter((s) => !s.eliminated && s.stack > 0).length;
+    const target = Math.min(this.setup.seatCount, this.field.remaining);
+    const avg = this.field.state().averageStack;
+    for (const s of this.seats) {
+      if (aliveAtTable() >= target) break;
+      if (!s.isHuman && (s.eliminated || s.stack <= 0)) {
+        s.eliminated = false;
+        s.name = NAMES[Math.floor(this.rng() * NAMES.length)];
+        s.avatar = s.name;
+        s.persona = PERSONA_POOL[Math.floor(this.rng() * PERSONA_POOL.length)];
+        // A relocated player arrives with a realistic stack around the average.
+        s.stack = Math.max(this.currentBlinds().bb * 8, Math.round(avg * (0.5 + this.rng() * 1.1)));
+        s.bubble = undefined;
       }
     }
   }
@@ -407,19 +440,21 @@ export class PokerController {
 
   private processEliminations(idToRt: Map<string, Runtime>) {
     if (this.setup.mode === 'cash') return;
+    // Each AI that lost its stack is a real elimination from the event.
     for (const s of this.seats) {
       if (!s.isHuman && !s.eliminated && s.stack <= 0) {
         s.eliminated = true;
-        if (this.field) this.field.remaining = Math.max(this.activeRemaining(), this.field.remaining - 1);
+        if (this.field) this.field.remaining = Math.max(1, this.field.remaining - 1);
       }
     }
     void idToRt;
   }
 
   private activeRemaining(): number {
-    const tableAlive = this.seats.filter((s) => !s.eliminated && s.stack > 0).length;
-    if (this.field) return Math.max(tableAlive, this.field.remaining);
-    return tableAlive;
+    // The MTT field count is the single source of truth (includes the hero,
+    // who is alive until busted). SnG counts the table directly.
+    if (this.field) return this.field.remaining;
+    return this.seats.filter((s) => !s.eliminated && s.stack > 0).length;
   }
 
   private advanceLevelIfNeeded() {
@@ -432,18 +467,21 @@ export class PokerController {
   private tickField() {
     if (!this.field || !this.setup.handsPerLevel) return;
     const levelFactor = this.levelIndex / Math.max(1, (this.setup.schedule?.length ?? 1));
-    this.field.tick(this.setup.handsPerLevel, levelFactor);
+    this.field.tick(levelFactor);
   }
 
   private handleTournamentEnd(heroBusted: boolean) {
     const fieldSize = this.setup.fieldSize ?? this.setup.seatCount;
-    let remaining: number;
+    let place: number;
     if (heroBusted) {
-      remaining = this.activeRemaining();
+      // Players still in the event, excluding the hero, finish above them.
+      const survivors = this.field
+        ? Math.max(0, this.field.remaining - 1) // field count includes the hero
+        : this.seats.filter((s) => !s.isHuman && !s.eliminated && s.stack > 0).length;
+      place = survivors + 1;
     } else {
-      remaining = 1; // hero last standing
+      place = 1; // hero is the last player standing in the whole field
     }
-    const place = heroBusted ? remaining + 1 : 1;
     const ladder = payoutLadder(fieldSize);
     const prizePool = this.setup.buyIn * fieldSize;
     const frac = place <= ladder.length ? ladder[place - 1] : 0;
@@ -577,5 +615,6 @@ export class PokerController {
     this.humanResolver = null;
     this.rebuyResolver = null;
     this.offBus();
+    this.offReady();
   }
 }

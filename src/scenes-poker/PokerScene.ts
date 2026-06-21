@@ -64,25 +64,43 @@ export class PokerScene extends Phaser.Scene {
 
     this.dealerBtn = this.makeDealerButton();
 
-    this.offState = pokerBus.on('state', (v) => this.renderView(v));
+    this.offState = pokerBus.on('state', (v) => {
+      // Cache in the game registry so a scene restart (e.g. on rotate) can
+      // immediately re-render the current table instead of going blank.
+      this.registry.set('pokerView', v);
+      this.renderView(v);
+    });
     this.offBoard = pokerBus.on('deal-board', ({ cards }) => this.renderBoard(cards, true));
     this.offWin = pokerBus.on('win', (w) => this.celebrate(w));
 
+    // Clean up bus listeners whenever the scene shuts down or restarts.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
     this.scale.on('resize', this.onResize, this);
+
     pokerBus.emit('scene-ready', undefined);
-    if (this.currentView) this.renderView(this.currentView);
+
+    // Render whatever the controller last published (survives restarts).
+    const cached = (this.registry.get('pokerView') as PokerView | undefined) ?? this.currentView;
+    if (cached) this.renderView(cached);
   }
 
+  private resizeTimer?: Phaser.Time.TimerEvent;
   private onResize() {
-    // Rebuild on orientation/size change.
-    this.scene.restart();
+    // Debounce: rotation/URL-bar resizes can fire rapidly. Rebuild once it settles.
+    this.resizeTimer?.remove();
+    this.resizeTimer = this.time.delayedCall(180, () => {
+      if (this.scene.isActive()) this.scene.restart();
+    });
   }
 
-  shutdown() {
+  private cleanup() {
     this.offState?.();
     this.offWin?.();
     this.offBoard?.();
     this.scale.off('resize', this.onResize, this);
+    this.seatObjs.clear();
+    this.boardSprites = [];
   }
 
   private buildTable() {

@@ -74,33 +74,41 @@ export interface FieldState {
  */
 export class FieldSimulator {
   remaining: number;
+  readonly fieldSize: number;
+  readonly finalTable: number;
   private startStack: number;
   private leader: number;
   private rng: () => number;
 
-  constructor(fieldSize: number, startStack: number, rng: () => number) {
+  constructor(fieldSize: number, startStack: number, rng: () => number, finalTable = 9) {
     this.remaining = fieldSize;
+    this.fieldSize = fieldSize;
+    this.finalTable = finalTable;
     this.startStack = startStack;
     this.leader = startStack;
     this.rng = rng;
   }
 
+  /** Total chips in play is constant (sum of all starting stacks). */
   totalChips(): number {
-    return this.remaining * this.startStack;
+    return this.fieldSize * this.startStack;
   }
 
-  /** Advance the field after one of the hero's hands completes. */
-  tick(handsPerLevel: number, levelFactor: number): number {
-    if (this.remaining <= 9) return 0;
-    // More busts as blinds rise; scaled so a big field thins steadily.
-    const expectedBusts = Math.max(0, (this.remaining / handsPerLevel) * (0.6 + levelFactor * 0.5));
-    let busts = Math.floor(expectedBusts);
-    if (this.rng() < expectedBusts - busts) busts++;
-    busts = Math.min(busts, this.remaining - 9);
+  /**
+   * Bust some players at *other* tables after one of the hero's hands. The rate
+   * decelerates as the field shrinks and never drops below the final table —
+   * those survivors are the ones the hero must actually beat in person.
+   */
+  tick(levelFactor: number): number {
+    if (this.remaining <= this.finalTable) return 0;
+    const rate = 0.018 + levelFactor * 0.05;
+    const expected = this.remaining * rate;
+    let busts = Math.floor(expected);
+    if (this.rng() < expected - busts) busts++;
+    busts = Math.max(0, Math.min(busts, this.remaining - this.finalTable));
     this.remaining -= busts;
-    // Chip leader drifts upward as chips consolidate.
     const avg = this.totalChips() / this.remaining;
-    this.leader = Math.max(this.leader, Math.round(avg * (1.8 + this.rng() * 1.4)));
+    this.leader = Math.max(this.leader, Math.round(avg * (1.4 + this.rng() * 0.9)));
     return busts;
   }
 
