@@ -35,6 +35,7 @@ import Profile from './screens/Profile';
 import Settings from './screens/Settings';
 import About from './screens/About';
 import { SafeScreen } from './ui';
+import { BottomNav } from './BottomNav';
 
 // The two game surfaces pull in Phaser — load them lazily so the lobby and
 // menus stay light on mobile.
@@ -66,6 +67,7 @@ export default function App() {
         </Routes>
       </Suspense>
       </ErrorBoundary>
+      <BottomNav />
     </SafeScreen>
   );
 }

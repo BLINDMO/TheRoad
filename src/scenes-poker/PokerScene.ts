@@ -1,32 +1,31 @@
 import Phaser from 'phaser';
 import { pokerBus, type PokerView, type PokerSeatView } from '../lib/eventBus';
 import { cardTexture, cardBackTexture, CARD_RATIO } from './cardTextures';
-import { chipStyleFor, renderChip } from '../assets/chipArt';
+import { renderChip } from '../assets/chipArt';
+import { renderFelt } from '../assets/tableArt';
 
-// The poker table surface. React stays out of this canvas; the scene only
-// consumes typed events from pokerBus and renders felt, seats, cards, chips,
-// the dealer button and win celebrations.
+// The poker table surface. React stays out of this canvas; the scene consumes
+// typed events from pokerBus and renders an HD felt, modern player pods, cards,
+// chips, the dealer button and win celebrations. Layout adapts to portrait or
+// landscape so the table fills the screen either way.
 
-const FELT = 0x0b3d2e;
-const FELT_LIGHT = 0x13513d;
-const RAIL = 0x1a1410;
 const BRASS = 0xc9a24b;
-const CREAM = 0xf2e9d8;
 
 interface SeatObjs {
   container: Phaser.GameObjects.Container;
-  cardSprites: Phaser.GameObjects.Image[];
-  betText: Phaser.GameObjects.Text;
-  betChip: Phaser.GameObjects.Image | null;
-  stackText: Phaser.GameObjects.Text;
-  nameText: Phaser.GameObjects.Text;
-  ring: Phaser.GameObjects.Arc;
+  plate: Phaser.GameObjects.Graphics;
+  glow: Phaser.GameObjects.Graphics;
   avatar: Phaser.GameObjects.Container;
-  actGlow: Phaser.GameObjects.Arc;
+  nameText: Phaser.GameObjects.Text;
+  stackText: Phaser.GameObjects.Text;
+  cardSprites: Phaser.GameObjects.Image[];
+  betChip: Phaser.GameObjects.Image | null;
+  betText: Phaser.GameObjects.Text;
+  badge: Phaser.GameObjects.Container | null;
   bubble: Phaser.GameObjects.Container | null;
   lastCardsKey: string;
   lastAction?: string;
-  badge: Phaser.GameObjects.Container | null;
+  glowTween?: Phaser.Tweens.Tween;
 }
 
 export class PokerScene extends Phaser.Scene {
@@ -40,6 +39,7 @@ export class PokerScene extends Phaser.Scene {
   private centerY = 0;
   private tableW = 0;
   private tableH = 0;
+  private landscape = false;
   private offState!: () => void;
   private offWin!: () => void;
   private offBoard!: () => void;
@@ -53,41 +53,35 @@ export class PokerScene extends Phaser.Scene {
     this.buildTable();
     this.makeChipTextures();
 
-    this.potChip = this.add.image(this.centerX - 38, this.centerY + this.tableH * 0.12, 'chip-walnut')
-      .setScale(0.5).setVisible(false);
-    this.potText = this.add.text(this.centerX, this.centerY + this.tableH * 0.12, '', {
-      fontFamily: 'Zilla Slab, serif', fontSize: '26px', color: '#F2E9D8', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    this.msgText = this.add.text(this.centerX, this.centerY - this.tableH * 0.02, '', {
-      fontFamily: 'Inter, sans-serif', fontSize: '15px', color: '#C9A24B',
-    }).setOrigin(0.5).setAlpha(0.9);
+    this.potChip = this.add.image(0, 0, 'chip-walnut').setScale(0.42).setDepth(6).setVisible(false);
+    this.potText = this.add.text(0, 0, '', {
+      fontFamily: 'Zilla Slab, serif', fontSize: '22px', color: '#F2E9D8', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(6);
+    this.msgText = this.add.text(this.centerX, this.centerY - this.tableH * 0.34, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: '14px', color: '#E4C878',
+    }).setOrigin(0.5).setDepth(6).setAlpha(0.92);
+    this.layoutPot();
 
     this.dealerBtn = this.makeDealerButton();
 
     this.offState = pokerBus.on('state', (v) => {
-      // Cache in the game registry so a scene restart (e.g. on rotate) can
-      // immediately re-render the current table instead of going blank.
       this.registry.set('pokerView', v);
       this.renderView(v);
     });
     this.offBoard = pokerBus.on('deal-board', ({ cards }) => this.renderBoard(cards, true));
     this.offWin = pokerBus.on('win', (w) => this.celebrate(w));
 
-    // Clean up bus listeners whenever the scene shuts down or restarts.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.cleanup, this);
     this.events.once(Phaser.Scenes.Events.DESTROY, this.cleanup, this);
     this.scale.on('resize', this.onResize, this);
 
     pokerBus.emit('scene-ready', undefined);
-
-    // Render whatever the controller last published (survives restarts).
     const cached = (this.registry.get('pokerView') as PokerView | undefined) ?? this.currentView;
     if (cached) this.renderView(cached);
   }
 
   private resizeTimer?: Phaser.Time.TimerEvent;
   private onResize() {
-    // Debounce: rotation/URL-bar resizes can fire rapidly. Rebuild once it settles.
     this.resizeTimer?.remove();
     this.resizeTimer = this.time.delayedCall(180, () => {
       if (this.scene.isActive()) this.scene.restart();
@@ -103,70 +97,81 @@ export class PokerScene extends Phaser.Scene {
     this.boardSprites = [];
   }
 
+  private layoutPot() {
+    const y = this.centerY + this.tableH * 0.30;
+    this.potChip.setPosition(this.centerX - 30, y);
+    this.potText.setPosition(this.centerX + 6, y);
+    this.msgText.setPosition(this.centerX, this.centerY - this.tableH * 0.40);
+  }
+
   private buildTable() {
     const { width, height } = this.scale;
+    this.landscape = width >= height;
     this.centerX = width / 2;
-    // Lift the table so the bottom (hero) seat clears the action bar, and the
-    // top seats clear the HUD strip.
-    this.centerY = height * 0.42;
-    this.tableW = width * 0.9;
-    this.tableH = height * 0.54;
+    this.centerY = height * (this.landscape ? 0.42 : 0.40);
+    this.tableW = this.landscape ? width * 0.7 : width * 0.92;
+    this.tableH = this.landscape ? height * 0.62 : height * 0.5;
 
-    const g = this.add.graphics();
-    // Rail
-    g.fillStyle(RAIL, 1);
-    g.fillEllipse(this.centerX, this.centerY, this.tableW + 34, this.tableH + 34);
-    // Brass trim
-    g.lineStyle(3, BRASS, 0.8);
-    g.strokeEllipse(this.centerX, this.centerY, this.tableW + 14, this.tableH + 14);
-    // Felt
-    g.fillStyle(FELT, 1);
-    g.fillEllipse(this.centerX, this.centerY, this.tableW, this.tableH);
-    g.fillStyle(FELT_LIGHT, 0.5);
-    g.fillEllipse(this.centerX, this.centerY - this.tableH * 0.08, this.tableW * 0.7, this.tableH * 0.42);
-    g.lineStyle(2, 0x0a3327, 1);
-    g.strokeEllipse(this.centerX, this.centerY, this.tableW * 0.74, this.tableH * 0.5);
+    // Rail (layered) drawn beneath the felt so it reads as a rim.
+    const rail = this.add.graphics().setDepth(-2);
+    rail.fillStyle(0x140f0a, 1);
+    rail.fillEllipse(this.centerX, this.centerY, this.tableW + 54, this.tableH + 54);
+    rail.fillStyle(0x2a211a, 1);
+    rail.fillEllipse(this.centerX, this.centerY, this.tableW + 34, this.tableH + 34);
+    rail.lineStyle(3, BRASS, 0.85);
+    rail.strokeEllipse(this.centerX, this.centerY, this.tableW + 30, this.tableH + 30);
+    rail.lineStyle(1, 0xe4c878, 0.5);
+    rail.strokeEllipse(this.centerX, this.centerY, this.tableW + 8, this.tableH + 8);
 
-    // Center monogram
-    this.add.text(this.centerX, this.centerY - this.tableH * 0.16, 'GILDED ACES', {
-      fontFamily: 'Playfair Display, serif', fontSize: '20px', color: '#0a3327', fontStyle: 'bold',
-    }).setOrigin(0.5).setAlpha(0.55);
+    // HD felt texture clipped to an ellipse.
+    const feltKey = 'felt-tex';
+    if (this.textures.exists(feltKey)) this.textures.remove(feltKey);
+    const fw = Math.min(900, Math.round(this.tableW));
+    const fh = Math.round(fw * (this.tableH / this.tableW));
+    this.textures.addCanvas(feltKey, renderFelt(fw, fh));
+    const felt = this.add.image(this.centerX, this.centerY, feltKey)
+      .setDisplaySize(this.tableW, this.tableH).setDepth(-1);
+    const maskG = this.make.graphics({});
+    maskG.fillStyle(0xffffff);
+    maskG.fillEllipse(this.centerX, this.centerY, this.tableW, this.tableH);
+    felt.setMask(maskG.createGeometryMask());
+
+    // Brand monogram, subtle.
+    this.add.text(this.centerX, this.centerY - this.tableH * 0.12, 'GILDED ACES', {
+      fontFamily: 'Playfair Display, serif', fontSize: this.landscape ? '22px' : '18px',
+      color: '#0c3a2a', fontStyle: 'bold',
+    }).setOrigin(0.5).setAlpha(0.5).setDepth(-1);
   }
 
   private makeChipTextures() {
     for (const label of ['red', 'green', 'walnut', 'amber', 'violet', 'gold']) {
       const key = `chip-${label}`;
-      if (!this.textures.exists(key)) {
-        const styleEntry = chipStyleForLabel(label);
-        this.textures.addCanvas(key, renderChip(styleEntry, 96));
-      }
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderChip(chipStyleForLabel(label), 96));
     }
   }
 
   private makeDealerButton(): Phaser.GameObjects.Container {
     const c = this.add.container(0, 0);
-    const disc = this.add.circle(0, 0, 14, 0xf2e9d8).setStrokeStyle(2, 0x8c6d2c);
+    const disc = this.add.circle(0, 0, 13, 0xf6efdd).setStrokeStyle(2, 0x8c6d2c);
     const t = this.add.text(0, 0, 'D', {
-      fontFamily: 'Zilla Slab, serif', fontSize: '16px', color: '#1a1410', fontStyle: 'bold',
+      fontFamily: 'Zilla Slab, serif', fontSize: '15px', color: '#1a1410', fontStyle: 'bold',
     }).setOrigin(0.5);
     c.add([disc, t]);
     c.setDepth(20).setVisible(false);
     return c;
   }
 
-  // --- seat geometry: hero at bottom, others around the oval ---------------
+  // Hero anchored bottom-centre; others spread clockwise around the oval.
   private seatPosition(displayIndex: number, total: number): { x: number; y: number } {
-    // displayIndex 0 = hero (bottom center), going clockwise.
-    const angleStart = Math.PI / 2; // bottom
-    const a = angleStart + (displayIndex / total) * Math.PI * 2;
-    const rx = this.tableW * 0.52;
-    const ry = this.tableH * 0.56;
+    const a = Math.PI / 2 + (displayIndex / total) * Math.PI * 2;
+    const rx = this.tableW * 0.54;
+    const ry = this.tableH * 0.62;
     return { x: this.centerX + Math.cos(a) * rx, y: this.centerY + Math.sin(a) * ry };
   }
 
   private renderView(v: PokerView) {
     this.currentView = v;
-    if (!this.sys || !this.scene.isActive()) return;
+    if (!this.scene.isActive()) return;
     const total = v.seats.length;
     const heroIdx = v.seats.findIndex((s) => s.isHuman);
     const order = (i: number) => (i - heroIdx + total) % total;
@@ -175,17 +180,18 @@ export class PokerScene extends Phaser.Scene {
       const pos = this.seatPosition(order(seat.seat), total);
       this.renderSeat(seat, pos);
       if (seat.isButton) {
-        this.dealerBtn.setVisible(true);
-        this.tweens.add({
-          targets: this.dealerBtn,
-          x: pos.x + 40, y: pos.y - 36, duration: 250, ease: 'Quad.out',
-        });
+        this.dealerBtn.setVisible(true).setDepth(20);
+        const bx = pos.x + (this.centerX - pos.x) * 0.22;
+        const by = pos.y + (this.centerY - pos.y) * 0.22;
+        this.tweens.add({ targets: this.dealerBtn, x: bx, y: by, duration: 250, ease: 'Quad.out' });
       }
     }
-    // remove seats no longer present
     for (const [idx, objs] of this.seatObjs) {
       if (!v.seats.some((s) => s.seat === idx)) {
         objs.container.destroy();
+        objs.betChip?.destroy();
+        objs.betText.destroy();
+        objs.badge?.destroy();
         this.seatObjs.delete(idx);
       }
     }
@@ -199,101 +205,122 @@ export class PokerScene extends Phaser.Scene {
   private getSeatObjs(seat: PokerSeatView, pos: { x: number; y: number }): SeatObjs {
     let o = this.seatObjs.get(seat.seat);
     if (o) return o;
-    const container = this.add.container(pos.x, pos.y);
-    const actGlow = this.add.circle(0, 0, 36, 0xe8743b, 0.0);
-    const ring = this.add.circle(0, 0, 30, 0x000000, 0).setStrokeStyle(3, BRASS, 0.9);
-    const avatar = this.makeAvatar(seat);
-    const nameText = this.add.text(0, 34, seat.name, {
+
+    const PW = this.landscape ? 122 : 108;
+    const PH = 44;
+    const container = this.add.container(pos.x, pos.y).setDepth(12);
+
+    const glow = this.add.graphics();
+    const plate = this.add.graphics();
+    this.drawPlate(plate, PW, PH, false);
+
+    const avatar = this.makeAvatar(seat, -PW / 2 + 24);
+    const nameText = this.add.text(-PW / 2 + 46, -9, seat.name, {
       fontFamily: 'Inter, sans-serif', fontSize: '13px', color: '#F2E9D8', fontStyle: 'bold',
-    }).setOrigin(0.5);
-    const stackText = this.add.text(0, 50, '', {
+    }).setOrigin(0, 0.5);
+    const stackText = this.add.text(-PW / 2 + 46, 10, '', {
       fontFamily: 'JetBrains Mono, monospace', fontSize: '12px', color: '#E4C878',
-    }).setOrigin(0.5);
-    container.add([actGlow, ring, avatar, nameText, stackText]);
+    }).setOrigin(0, 0.5);
+
+    container.add([glow, plate, avatar, nameText, stackText]);
+    container.setData('pw', PW).setData('ph', PH);
 
     const betText = this.add.text(pos.x, pos.y, '', {
       fontFamily: 'JetBrains Mono, monospace', fontSize: '12px', color: '#F2E9D8', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(15);
 
     o = {
-      container, cardSprites: [], betText, betChip: null, stackText, nameText, ring, avatar, actGlow,
-      bubble: null, lastCardsKey: '', badge: null,
+      container, plate, glow, avatar, nameText, stackText,
+      cardSprites: [], betChip: null, betText, badge: null, bubble: null, lastCardsKey: '',
     };
     this.seatObjs.set(seat.seat, o);
     return o;
   }
 
-  private makeAvatar(seat: PokerSeatView): Phaser.GameObjects.Container {
-    const c = this.add.container(0, 0);
-    const hue = [...seat.id].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 360;
-    const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.5, 0.4) as Phaser.Types.Display.ColorObject;
-    const disc = this.add.circle(0, 0, 27, Phaser.Display.Color.GetColor(col.r, col.g, col.b));
+  private drawPlate(g: Phaser.GameObjects.Graphics, w: number, h: number, active: boolean) {
+    g.clear();
+    g.fillStyle(0x1a1410, 0.92);
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
+    g.lineStyle(1.5, active ? 0xe8743b : BRASS, active ? 1 : 0.55);
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+  }
+
+  private makeAvatar(seat: PokerSeatView, x: number): Phaser.GameObjects.Container {
+    const c = this.add.container(x, 0);
+    const hue = avatarHue(seat.name + seat.id);
+    const col = Phaser.Display.Color.HSVToRGB(hue / 360, 0.55, 0.5) as Phaser.Types.Display.ColorObject;
+    const dark = Phaser.Display.Color.HSVToRGB(hue / 360, 0.6, 0.3) as Phaser.Types.Display.ColorObject;
+    const ring = this.add.circle(0, 0, 19, Phaser.Display.Color.GetColor(dark.r, dark.g, dark.b)).setStrokeStyle(2, BRASS, 0.7);
+    const disc = this.add.circle(0, 0, 16, Phaser.Display.Color.GetColor(col.r, col.g, col.b));
     const letter = this.add.text(0, 0, seat.name.slice(0, 1).toUpperCase(), {
-      fontFamily: 'Playfair Display, serif', fontSize: '22px', color: '#F2E9D8', fontStyle: 'bold',
+      fontFamily: 'Playfair Display, serif', fontSize: '18px', color: '#F8F2E3', fontStyle: 'bold',
     }).setOrigin(0.5);
-    c.add([disc, letter]);
+    c.add([ring, disc, letter]);
     return c;
   }
 
   private renderSeat(seat: PokerSeatView, pos: { x: number; y: number }) {
     const o = this.getSeatObjs(seat, pos);
     o.container.setPosition(pos.x, pos.y);
-    o.container.setAlpha(seat.folded ? 0.42 : 1);
+    o.container.setAlpha(seat.folded ? 0.4 : 1);
     o.nameText.setText(seat.name);
     o.stackText.setText(seat.allIn ? 'ALL IN' : seat.stack.toLocaleString());
-    o.stackText.setColor(seat.allIn ? '#E8743B' : '#E4C878');
+    o.stackText.setColor(seat.allIn ? '#F49A6B' : '#E4C878');
 
-    // acting glow
-    o.actGlow.setFillStyle(0xe8743b, seat.isActing ? 0.0 : 0);
+    const PW = o.container.getData('pw') as number;
+    const PH = o.container.getData('ph') as number;
+    this.drawPlate(o.plate, PW, PH, seat.isActing);
+
+    // Active glow ring around the pod.
     if (seat.isActing) {
-      o.ring.setStrokeStyle(3, 0xe8743b, 1);
-      this.tweens.add({ targets: o.actGlow, fillAlpha: 0.4, scale: 1.25, yoyo: true, repeat: -1, duration: 600 });
-    } else {
-      o.ring.setStrokeStyle(3, BRASS, 0.9);
-      this.tweens.killTweensOf(o.actGlow);
-      o.actGlow.setScale(1).setFillStyle(0xe8743b, 0);
-    }
-
-    // cards
-    this.renderSeatCards(seat, pos, o);
-
-    // bet chips toward center
-    if (seat.bet > 0) {
-      const bx = pos.x + (this.centerX - pos.x) * 0.32;
-      const by = pos.y + (this.centerY - pos.y) * 0.32;
-      if (!o.betChip) {
-        o.betChip = this.add.image(pos.x, pos.y, `chip-${chipLabelFor(seat.bet)}`).setScale(0.34).setDepth(14);
+      o.glow.clear();
+      o.glow.lineStyle(3, 0xe8743b, 0.9);
+      o.glow.strokeRoundedRect(-PW / 2 - 3, -PH / 2 - 3, PW + 6, PH + 6, 12);
+      if (!o.glowTween) {
+        o.glowTween = this.tweens.add({ targets: o.glow, alpha: 0.25, yoyo: true, repeat: -1, duration: 600 });
       }
-      o.betChip.setTexture(`chip-${chipLabelFor(seat.bet)}`).setVisible(true);
-      this.tweens.add({ targets: o.betChip, x: bx, y: by - 14, duration: 220, ease: 'Quad.out' });
-      o.betText.setText(seat.bet.toLocaleString()).setVisible(true).setPosition(bx, by + 6);
     } else {
-      o.betChip?.setVisible(false);
-      o.betText.setVisible(false);
+      o.glow.clear();
+      o.glowTween?.remove();
+      o.glowTween = undefined;
+      o.glow.setAlpha(1);
     }
 
-    // status badge (SB/BB)
+    this.renderSeatCards(seat, pos, o);
+    this.renderBet(seat, pos, o);
     this.renderBadge(seat, pos, o);
 
-    // bubble — only when the action or chat actually changes, so it doesn't
-    // re-pop on every state refresh.
     const actionChanged = seat.lastAction !== o.lastAction;
     o.lastAction = seat.lastAction;
     this.renderBubble(seat, pos, o, actionChanged);
   }
 
+  private renderBet(seat: PokerSeatView, pos: { x: number; y: number }, o: SeatObjs) {
+    if (seat.bet > 0) {
+      const bx = pos.x + (this.centerX - pos.x) * 0.34;
+      const by = pos.y + (this.centerY - pos.y) * 0.34;
+      if (!o.betChip) o.betChip = this.add.image(pos.x, pos.y, `chip-${chipLabelFor(seat.bet)}`).setScale(0.3).setDepth(14);
+      o.betChip.setTexture(`chip-${chipLabelFor(seat.bet)}`).setVisible(true);
+      this.tweens.add({ targets: o.betChip, x: bx, y: by - 12, duration: 220, ease: 'Quad.out' });
+      o.betText.setText(seat.bet.toLocaleString()).setVisible(true).setPosition(bx + 14, by - 12);
+    } else {
+      o.betChip?.setVisible(false);
+      o.betText.setVisible(false);
+    }
+  }
+
   private renderBadge(seat: PokerSeatView, pos: { x: number; y: number }, o: SeatObjs) {
+    const PW = o.container.getData('pw') as number;
     if (seat.status) {
       if (!o.badge) {
-        const c = this.add.container(pos.x - 34, pos.y - 24).setDepth(16);
-        const bg = this.add.circle(0, 0, 11, 0x1a1410).setStrokeStyle(1.5, BRASS);
-        const t = this.add.text(0, 0, seat.status, { fontFamily: 'Inter', fontSize: '10px', color: '#E4C878', fontStyle: 'bold' }).setOrigin(0.5);
+        const c = this.add.container(0, 0).setDepth(16);
+        const bg = this.add.circle(0, 0, 10, 0x0b3d2e).setStrokeStyle(1.5, BRASS);
+        const t = this.add.text(0, 0, seat.status, { fontFamily: 'Inter', fontSize: '9px', color: '#E4C878', fontStyle: 'bold' }).setOrigin(0.5);
         c.add([bg, t]);
         o.badge = c;
-      } else {
-        o.badge.setPosition(pos.x - 34, pos.y - 24).setVisible(true);
-        (o.badge.list[1] as Phaser.GameObjects.Text).setText(seat.status);
       }
+      (o.badge.list[1] as Phaser.GameObjects.Text).setText(seat.status);
+      o.badge.setPosition(pos.x + PW / 2 - 6, pos.y - 22).setVisible(true);
     } else {
       o.badge?.setVisible(false);
     }
@@ -303,19 +330,16 @@ export class PokerScene extends Phaser.Scene {
     const chat = seat.bubble;
     const actionLabel = actionChanged && seat.lastAction && !seat.folded ? labelAction(seat.lastAction) : '';
     const text = chat || actionLabel;
-    if (text) {
-      if (o.bubble) o.bubble.destroy();
-      const c = this.add.container(pos.x, pos.y - 56).setDepth(18);
-      const t = this.add.text(0, 0, text, { fontFamily: 'Inter', fontSize: '11px', color: '#1a1410', fontStyle: 'bold' }).setOrigin(0.5);
-      const pad = 8;
-      const bg = this.add.rectangle(0, 0, t.width + pad * 2, t.height + pad, 0xf2e9d8, 1).setStrokeStyle(1, BRASS);
-      bg.setOrigin(0.5);
-      c.add([bg, t]);
-      c.setScale(0.6);
-      this.tweens.add({ targets: c, scale: 1, duration: 160, ease: 'Back.out' });
-      o.bubble = c;
-      this.time.delayedCall(1400, () => { if (o.bubble === c) { c.destroy(); o.bubble = null; } });
-    }
+    if (!text) return;
+    o.bubble?.destroy();
+    const c = this.add.container(pos.x, pos.y - 40).setDepth(18);
+    const t = this.add.text(0, 0, text, { fontFamily: 'Inter', fontSize: '11px', color: '#1a1410', fontStyle: 'bold' }).setOrigin(0.5);
+    const bg = this.add.rectangle(0, 0, t.width + 16, t.height + 8, 0xf2e9d8, 1).setStrokeStyle(1, BRASS).setOrigin(0.5);
+    c.add([bg, t]);
+    c.setScale(0.6);
+    this.tweens.add({ targets: c, scale: 1, duration: 150, ease: 'Back.out' });
+    o.bubble = c;
+    this.time.delayedCall(1400, () => { if (o.bubble === c) { c.destroy(); o.bubble = null; } });
   }
 
   private renderSeatCards(seat: PokerSeatView, pos: { x: number; y: number }, o: SeatObjs) {
@@ -326,50 +350,45 @@ export class PokerScene extends Phaser.Scene {
     o.cardSprites = [];
     if (seat.folded) return;
 
-    const cw = seat.isHuman ? 58 : 34;
+    const cw = seat.isHuman ? (this.landscape ? 66 : 58) : 34;
     const ch = cw * CARD_RATIO;
-    const towardCenter = Math.sign(this.centerY - pos.y) || -1;
-    const cy = pos.y - 6 + (seat.isHuman ? 4 : -2) * towardCenter;
+    const toward = Math.sign(this.centerY - pos.y) || -1;
+    const cy = pos.y + (seat.isHuman ? -ch * 0.5 - 6 : toward * 16);
     const showFaces = seat.showCards && seat.cards.length > 0;
-    const n = 2;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < 2; i++) {
       const card = seat.cards[i];
       const texKey = showFaces && card ? cardTexture(this, card) : cardBackTexture(this);
-      const x = pos.x + (i - 0.5) * (cw * 0.62);
+      const x = pos.x + (i - 0.5) * (cw * 0.6);
       const sprite = this.add.image(this.centerX, this.centerY, texKey)
-        .setDisplaySize(cw, ch).setDepth(10).setAngle((i - 0.5) * 8);
+        .setDisplaySize(cw, ch).setDepth(11).setAngle((i - 0.5) * 7);
       o.cardSprites.push(sprite);
-      this.tweens.add({
-        targets: sprite, x, y: cy, duration: 320, delay: i * 80, ease: 'Cubic.out',
-      });
+      this.tweens.add({ targets: sprite, x, y: cy, duration: 320, delay: i * 80, ease: 'Cubic.out' });
     }
   }
 
   private renderBoard(cards: string[], animate: boolean) {
-    const cw = Math.min(64, this.tableW * 0.13);
+    const cw = Math.min(this.landscape ? 74 : 60, this.tableW * 0.12);
     const ch = cw * CARD_RATIO;
-    const gap = cw * 1.12;
-    const startX = this.centerX - (gap * (5 - 1)) / 2;
-    const y = this.centerY - this.tableH * 0.06;
+    const gap = cw * 1.14;
+    const startX = this.centerX - (gap * 4) / 2;
+    const y = this.centerY + this.tableH * 0.02;
 
-    // add any new cards
     for (let i = 0; i < cards.length; i++) {
-      if (this.boardSprites[i]) continue;
+      if (this.boardSprites[i]) {
+        this.boardSprites[i].setPosition(startX + i * gap, y).setDisplaySize(cw, ch);
+        continue;
+      }
       const tex = cardTexture(this, cards[i]);
-      const sprite = this.add.image(animate ? this.centerX : startX + i * gap, y, tex)
-        .setDisplaySize(cw, ch).setDepth(8);
+      const sprite = this.add.image(animate ? this.centerX : startX + i * gap, y, tex).setDisplaySize(cw, ch).setDepth(8);
       this.boardSprites[i] = sprite;
       if (animate) {
-        sprite.setScale(0).setAngle(-20);
+        sprite.setScale(0).setAngle(-18);
         this.tweens.add({
           targets: sprite, x: startX + i * gap, displayWidth: cw, displayHeight: ch,
           scaleX: 1, scaleY: 1, angle: 0, duration: 360, delay: i * 90, ease: 'Back.out',
         });
-      } else {
-        sprite.setPosition(startX + i * gap, y);
       }
     }
-    // clear board on new hand (fewer cards than before)
     if (cards.length < this.boardSprites.length) {
       this.boardSprites.forEach((s) => s?.destroy());
       this.boardSprites = [];
@@ -377,7 +396,6 @@ export class PokerScene extends Phaser.Scene {
   }
 
   private celebrate({ seat, amount, big }: { seat: number; amount: number; big: boolean }) {
-    // chips fly from pot to the winner, then a particle burst.
     const view = this.currentView;
     if (!view) return;
     const total = view.seats.length;
@@ -385,58 +403,56 @@ export class PokerScene extends Phaser.Scene {
     const order = (i: number) => (i - heroIdx + total) % total;
     const pos = this.seatPosition(order(seat), total);
 
-    const count = big ? 16 : 7;
+    const count = big ? 18 : 8;
     for (let i = 0; i < count; i++) {
-      const chip = this.add.image(this.centerX, this.centerY + this.tableH * 0.1, 'chip-gold')
-        .setScale(0.34).setDepth(30);
+      const chip = this.add.image(this.centerX, this.centerY + this.tableH * 0.28, 'chip-gold').setScale(0.3).setDepth(30);
       this.tweens.add({
-        targets: chip, x: pos.x + (Math.random() - 0.5) * 30, y: pos.y + (Math.random() - 0.5) * 24,
-        duration: 420 + Math.random() * 200, delay: i * 28, ease: 'Cubic.out',
-        onComplete: () => chip.destroy(),
+        targets: chip, x: pos.x + (Math.random() - 0.5) * 30, y: pos.y + (Math.random() - 0.5) * 22,
+        duration: 420 + Math.random() * 200, delay: i * 26, ease: 'Cubic.out', onComplete: () => chip.destroy(),
       });
     }
-
-    const win = this.add.text(pos.x, pos.y - 40, `+${amount.toLocaleString()}`, {
-      fontFamily: 'Zilla Slab, serif', fontSize: big ? '30px' : '20px', color: '#FFB37A', fontStyle: 'bold',
+    const win = this.add.text(pos.x, pos.y - 36, `+${amount.toLocaleString()}`, {
+      fontFamily: 'Zilla Slab, serif', fontSize: big ? '28px' : '19px', color: '#FFB37A', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(40).setScale(0.4);
-    this.tweens.add({ targets: win, scale: 1, y: pos.y - 64, duration: 500, ease: 'Back.out' });
-    this.tweens.add({ targets: win, alpha: 0, delay: 1400, duration: 500, onComplete: () => win.destroy() });
-
-    if (big) this.bigBurst(pos.x, pos.y);
+    this.tweens.add({ targets: win, scale: 1, y: pos.y - 58, duration: 480, ease: 'Back.out' });
+    this.tweens.add({ targets: win, alpha: 0, delay: 1300, duration: 500, onComplete: () => win.destroy() });
+    if (big) this.bigBurst();
   }
 
-  private bigBurst(x: number, y: number) {
+  private bigBurst() {
     const colors = [0xc9a24b, 0xe8743b, 0xf2e9d8, 0xe4c878];
-    for (let i = 0; i < 40; i++) {
-      const p = this.add.rectangle(this.centerX, this.centerY, 6, 10,
-        colors[i % colors.length]).setDepth(35);
+    for (let i = 0; i < 44; i++) {
+      const p = this.add.rectangle(this.centerX, this.centerY, 6, 10, colors[i % colors.length]).setDepth(35);
       const ang = Math.random() * Math.PI * 2;
-      const dist = 80 + Math.random() * 160;
+      const dist = 80 + Math.random() * 180;
       this.tweens.add({
-        targets: p,
-        x: this.centerX + Math.cos(ang) * dist,
-        y: this.centerY + Math.sin(ang) * dist + 60,
-        angle: Math.random() * 360, alpha: 0, duration: 900 + Math.random() * 500,
-        ease: 'Cubic.out', onComplete: () => p.destroy(),
+        targets: p, x: this.centerX + Math.cos(ang) * dist, y: this.centerY + Math.sin(ang) * dist + 50,
+        angle: Math.random() * 360, alpha: 0, duration: 900 + Math.random() * 500, ease: 'Cubic.out',
+        onComplete: () => p.destroy(),
       });
     }
-    void x; void y;
   }
+}
+
+function avatarHue(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
 }
 
 function chipLabelFor(value: number): string {
-  return chipLabelByStyle(chipStyleFor(value));
-}
-function chipLabelByStyle(style: ReturnType<typeof chipStyleFor>): string {
-  // map back: find label whose style matches body color
-  const map: Record<string, string> = {
-    '#b5304a': 'red', '#2fa37c': 'green', '#2a211a': 'walnut',
-    '#e8743b': 'amber', '#7d4fb0': 'violet', '#c9a24b': 'gold',
-  };
-  return map[style.body] ?? 'walnut';
+  if (value <= 5) return 'red';
+  if (value <= 25) return 'green';
+  if (value <= 100) return 'walnut';
+  if (value <= 500) return 'amber';
+  if (value <= 1000) return 'violet';
+  return 'gold';
 }
 function chipStyleForLabel(label: string) {
-  const bodies: Record<string, any> = {
+  const bodies: Record<string, { body: string; bodyDark: string; edge: string }> = {
     red: { body: '#b5304a', bodyDark: '#7c1b2f', edge: '#f2e9d8' },
     green: { body: '#2fa37c', bodyDark: '#196b51', edge: '#f2e9d8' },
     walnut: { body: '#2a211a', bodyDark: '#120d09', edge: '#c9a24b' },
@@ -446,7 +462,6 @@ function chipStyleForLabel(label: string) {
   };
   return bodies[label];
 }
-
 function labelAction(a: string): string {
   switch (a) {
     case 'fold': return 'Fold';
@@ -459,5 +474,3 @@ function labelAction(a: string): string {
     default: return '';
   }
 }
-
-void CREAM;

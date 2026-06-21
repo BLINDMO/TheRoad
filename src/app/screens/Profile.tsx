@@ -26,7 +26,7 @@ export default function Profile() {
   return (
     <div className="felt grain min-h-full">
       <BackBar title="Profile" />
-      <div className="space-y-4 px-4 pb-10">
+      <div className="space-y-4 px-4 pb-28">
         <Panel className="flex items-center gap-4 p-5">
           <Avatar id={profile.avatar} size={64} />
           <div className="flex-1">

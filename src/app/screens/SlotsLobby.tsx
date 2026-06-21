@@ -12,7 +12,7 @@ export default function SlotsLobby() {
   return (
     <div className="min-h-full bg-gradient-to-b from-[#1a1430] to-[#0a0712]">
       <BackBar title="Slots Floor" right={<MoneyPill value={bankroll} />} />
-      <div className="space-y-4 px-4 pb-10 pt-1">
+      <div className="space-y-4 px-4 pb-28 pt-1">
         {MACHINES.map((m) => {
           const jp = m.jackpot ? (jackpots[m.id] ?? m.jackpot.seed) : null;
           return (

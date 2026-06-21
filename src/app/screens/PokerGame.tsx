@@ -32,6 +32,8 @@ export default function PokerGame() {
   const [result, setResult] = useState<TableResult | null>(null);
   const [pot, setPot] = useState(0);
   const [needRebuy, setNeedRebuy] = useState(false);
+  const portrait = usePortrait();
+  const [stayPortrait, setStayPortrait] = useState(false);
 
   useEffect(() => {
     if (!setup) {
@@ -140,7 +142,45 @@ export default function PokerGame() {
         </Modal>
       )}
 
-      {result && <ResultModal result={result} setup={setup} onClose={() => nav('/poker')} />}
+      {result && <ResultModal result={result} setup={setup} onHome={() => nav('/')} onAnother={() => nav('/poker')} />}
+
+      {portrait && !stayPortrait && !result && <RotatePrompt onStay={() => setStayPortrait(true)} />}
+    </div>
+  );
+}
+
+function usePortrait() {
+  const [portrait, setPortrait] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(orientation: portrait)').matches : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: portrait)');
+    const h = () => setPortrait(mq.matches);
+    mq.addEventListener('change', h);
+    return () => mq.removeEventListener('change', h);
+  }, []);
+  return portrait;
+}
+
+function RotatePrompt({ onStay }: { onStay: () => void }) {
+  return (
+    <div className="absolute inset-0 z-50 grid place-items-center bg-walnut/95 px-8 text-center"
+      style={{ paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}>
+      <div className="animate-fade-up">
+        <div className="mx-auto mb-5 w-fit animate-pulse">
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#C9A24B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="7" y="2" width="10" height="20" rx="2" transform="rotate(35 12 12)" />
+            <path d="M2.5 13.5a9 9 0 0 0 14 5.5" />
+            <path d="M16.5 19.5l1.2-2.6 2.6 1.2" />
+          </svg>
+        </div>
+        <h2 className="font-display text-2xl font-bold brass-text">Turn your phone sideways</h2>
+        <p className="mt-2 text-sm text-cream-dim">The poker table plays in landscape for a bigger, clearer view — just like the pros.</p>
+        <button onClick={onStay}
+          className="tactile mt-6 rounded-pill bg-walnut-light/70 px-5 py-2.5 text-sm font-semibold text-cream-dim ring-1 ring-brass/30">
+          Play in portrait
+        </button>
+      </div>
     </div>
   );
 }
@@ -234,7 +274,7 @@ function Modal({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ResultModal({ result, setup, onClose }: { result: TableResult; setup: PokerSetup; onClose: () => void }) {
+function ResultModal({ result, setup, onHome, onAnother }: { result: TableResult; setup: PokerSetup; onHome: () => void; onAnother: () => void }) {
   const won = result.place === 1;
   useEffect(() => {
     if (won) { play('jackpot'); haptic([20, 60, 20, 60, 20]); }
@@ -264,7 +304,10 @@ function ResultModal({ result, setup, onClose }: { result: TableResult; setup: P
           )}
         </>
       )}
-      <BrassButton variant="gold" className="mt-5 w-full py-3" onClick={onClose}>Back to Lobby</BrassButton>
+      <div className="mt-5 flex gap-3">
+        <BrassButton variant="ghost" className="flex-1 py-3" onClick={onAnother}>New Game</BrassButton>
+        <BrassButton variant="gold" className="flex-1 py-3" onClick={onHome}>Home</BrassButton>
+      </div>
     </Modal>
   );
 }

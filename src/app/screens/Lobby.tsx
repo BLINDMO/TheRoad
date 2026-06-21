@@ -13,7 +13,7 @@ export default function Lobby() {
   const [claimed, setClaimed] = useState<number | null>(null);
 
   return (
-    <div className="felt grain min-h-full px-4 pb-8 pt-3">
+    <div className="felt grain min-h-full px-4 pb-28 pt-3">
       {/* Top bar */}
       <div className="flex items-center justify-between">
         <button
@@ -164,8 +164,10 @@ function SlotsArt() {
 }
 
 export function Avatar({ id, size = 40 }: { id: string; size?: number }) {
-  // Deterministic crest-style avatar from id.
-  const hue = [...id].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  // Deterministic crest-style avatar from id (well-spread hue hash).
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const hue = (h >>> 0) % 360;
   return (
     <div
       className="grid place-items-center rounded-full ring-1 ring-brass/50"

@@ -28,7 +28,7 @@ export default function PokerLobby() {
   return (
     <div className="felt grain min-h-full">
       <BackBar title="Poker Room" right={<MoneyPill value={bankroll} />} />
-      <div className="px-4 pb-10">
+      <div className="px-4 pb-28">
         <div className="mt-1 grid grid-cols-3 gap-2 rounded-pill bg-walnut-light/60 p-1 ring-1 ring-brass/25">
           {(['cash', 'sng', 'mtt'] as Tab[]).map((t) => (
             <button

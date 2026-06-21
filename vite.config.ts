@@ -23,7 +23,8 @@ export default defineConfig(({ command }) => {
           theme_color: '#0B3D2E',
           background_color: '#1A1410',
           display: 'standalone',
-          orientation: 'portrait',
+          // Allow rotation so the poker table can present in landscape.
+          orientation: 'any',
           // start_url/scope are derived from `base` by the plugin.
           icons: [
             { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
